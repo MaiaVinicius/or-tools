@@ -8,7 +8,7 @@ endif()
 
 # Will need swig
 set(CMAKE_SWIG_FLAGS)
-find_package(SWIG)
+find_package(SWIG REQUIRED)
 include(UseSWIG)
 
 #if(${SWIG_VERSION} VERSION_GREATER_EQUAL 4)
@@ -19,7 +19,7 @@ if(UNIX AND NOT APPLE)
   list(APPEND CMAKE_SWIG_FLAGS "-DSWIGWORDSIZE64")
 endif()
 
-# Setup Dotnet
+# Find dotnet cli
 find_program(DOTNET_EXECUTABLE NAMES dotnet)
 if(NOT DOTNET_EXECUTABLE)
   message(FATAL_ERROR "Check for dotnet Program: not found")
@@ -82,8 +82,9 @@ if(USE_COINOR)
 endif()
 list(APPEND CMAKE_SWIG_FLAGS ${FLAGS} "-I${PROJECT_SOURCE_DIR}")
 
-# Swig wrap all libraries
-set(DOTNET_PROJECT Google.OrTools)
+# Needed by dotnet/CMakeLists.txt
+set(DOTNET_PACKAGE Google.OrTools)
+set(DOTNET_PACKAGES_DIR "${PROJECT_BINARY_DIR}/dotnet/packages")
 if(APPLE)
   set(RUNTIME_IDENTIFIER osx-x64)
 elseif(UNIX)
@@ -93,21 +94,22 @@ elseif(WIN32)
 else()
   message(FATAL_ERROR "Unsupported system !")
 endif()
-set(DOTNET_NATIVE_PROJECT ${DOTNET_PROJECT}.runtime.${RUNTIME_IDENTIFIER})
+set(DOTNET_NATIVE_PROJECT ${DOTNET_PACKAGE}.runtime.${RUNTIME_IDENTIFIER})
+set(DOTNET_PROJECT ${DOTNET_PACKAGE})
 
+# Swig wrap all libraries
 foreach(SUBPROJECT IN ITEMS algorithms graph init linear_solver constraint_solver sat util)
   add_subdirectory(ortools/${SUBPROJECT}/csharp)
   target_link_libraries(google-ortools-native PRIVATE dotnet_${SUBPROJECT})
 endforeach()
 
-############################
-##  .Net Runtime Package  ##
-############################
 file(COPY tools/doc/orLogo.png DESTINATION dotnet)
-set(DOTNET_PACKAGES_DIR "${PROJECT_BINARY_DIR}/dotnet/packages")
 set(DOTNET_LOGO_DIR "${PROJECT_BINARY_DIR}/dotnet")
 configure_file(ortools/dotnet/Directory.Build.props.in dotnet/Directory.Build.props)
 
+############################
+##  .Net SNK file  ##
+############################
 # Build or retrieve .snk file
 if(DEFINED ENV{DOTNET_SNK})
   add_custom_command(OUTPUT dotnet/or-tools.snk
@@ -132,6 +134,9 @@ else()
     )
 endif()
 
+############################
+##  .Net Runtime Package  ##
+############################
 file(GENERATE OUTPUT dotnet/$<CONFIG>/replace_runtime.cmake
   CONTENT
   "FILE(READ ${PROJECT_SOURCE_DIR}/ortools/dotnet/${DOTNET_NATIVE_PROJECT}/${DOTNET_NATIVE_PROJECT}.csproj.in input)
