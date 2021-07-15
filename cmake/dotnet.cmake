@@ -67,6 +67,13 @@ set_target_properties(google-ortools-native PROPERTIES
 # note: macOS is APPLE and also UNIX !
 if(APPLE)
   set_target_properties(google-ortools-native PROPERTIES INSTALL_RPATH "@loader_path")
+  # Xcode fails to build if library doesn't contains at least one source file.
+  if(XCODE)
+    file(GENERATE
+      OUTPUT ${PROJECT_BINARY_DIR}/google-ortools-native/version.cpp
+      CONTENT "namespace {char* version = \"${PROJECT_VERSION}\";}")
+    target_sources(google-ortools-native PRIVATE ${PROJECT_BINARY_DIR}/google-ortools-native/version.cpp)
+  endif()
 elseif(UNIX)
   set_target_properties(google-ortools-native PROPERTIES INSTALL_RPATH "$ORIGIN")
 endif()
@@ -137,6 +144,10 @@ endif()
 ############################
 ##  .Net Runtime Package  ##
 ############################
+message(STATUS ".Net runtime project: ${DOTNET_NATIVE_PROJECT}")
+set(DOTNET_NATIVE_PATH ${PROJECT_BINARY_DIR}/dotnet/${DOTNET_NATIVE_PROJECT})
+message(STATUS ".Net runtime project build path: ${DOTNET_NATIVE_PATH}")
+
 file(GENERATE OUTPUT dotnet/$<CONFIG>/replace_runtime.cmake
   CONTENT
   "FILE(READ ${PROJECT_SOURCE_DIR}/ortools/dotnet/${DOTNET_NATIVE_PROJECT}/${DOTNET_NATIVE_PROJECT}.csproj.in input)
@@ -147,11 +158,11 @@ FILE(WRITE ${DOTNET_NATIVE_PROJECT}/${DOTNET_NATIVE_PROJECT}.csproj \"\${input}\
 )
 
 add_custom_command(
-  OUTPUT dotnet/${DOTNET_NATIVE_PROJECT}/${DOTNET_NATIVE_PROJECT}.csproj
+  OUTPUT ${DOTNET_NATIVE_PATH}/${DOTNET_NATIVE_PROJECT}.csproj
   COMMAND ${CMAKE_COMMAND} -E make_directory ${DOTNET_NATIVE_PROJECT}
   COMMAND ${CMAKE_COMMAND} -P ./$<CONFIG>/replace_runtime.cmake
-  WORKING_DIRECTORY dotnet
-  )
+  WORKING_DIRECTORY ${DOTNET_NATIVE_PATH}
+)
 
 if(WIN32)
 add_custom_command(
@@ -165,12 +176,11 @@ add_custom_command(
   set(DOTNET_TARGETS dotnet/${DOTNET_NATIVE_PROJECT}/${DOTNET_NATIVE_PROJECT}.targets)
 endif()
 
-add_custom_target(dotnet_native ALL
+add_custom_target(dotnet_native_package
   DEPENDS
     dotnet/or-tools.snk
     Dotnet${PROJECT_NAME}_proto
-    google-ortools-native
-    dotnet/${DOTNET_NATIVE_PROJECT}/${DOTNET_NATIVE_PROJECT}.csproj
+    ${DOTNET_NATIVE_PATH}/${DOTNET_NATIVE_PROJECT}.csproj
     ${DOTNET_TARGETS}
   COMMAND ${CMAKE_COMMAND} -E make_directory packages
   COMMAND ${DOTNET_EXECUTABLE} build -c Release /p:Platform=x64 ${DOTNET_NATIVE_PROJECT}/${DOTNET_NATIVE_PROJECT}.csproj
@@ -179,11 +189,14 @@ add_custom_target(dotnet_native ALL
     dotnet/${DOTNET_NATIVE_PROJECT}/bin
     dotnet/${DOTNET_NATIVE_PROJECT}/obj
   WORKING_DIRECTORY dotnet
-  )
+)
+add_dependencies(dotnet_native_package google-ortools-native)
 
 ####################
 ##  .Net Package  ##
 ####################
+set(DOTNET_PATH ${PROJECT_BINARY_DIR}/dotnet/${DOTNET_PROJECT})
+
 file(GENERATE OUTPUT dotnet/$<CONFIG>/replace.cmake
   CONTENT
   "FILE(READ ${PROJECT_SOURCE_DIR}/ortools/dotnet/${DOTNET_PROJECT}/${DOTNET_PROJECT}.csproj.in input)
@@ -195,17 +208,16 @@ FILE(WRITE ${DOTNET_PROJECT}/${DOTNET_PROJECT}.csproj \"\${input}\")"
 )
 
 add_custom_command(
-  OUTPUT dotnet/${DOTNET_PROJECT}/${DOTNET_PROJECT}.csproj
+  OUTPUT ${DOTNET_PATH}/${DOTNET_PROJECT}.csproj
   COMMAND ${CMAKE_COMMAND} -E make_directory ${DOTNET_PROJECT}
   COMMAND ${CMAKE_COMMAND} -P ./$<CONFIG>/replace.cmake
   WORKING_DIRECTORY dotnet
-  )
+)
 
 add_custom_target(dotnet_package ALL
   DEPENDS
     dotnet/or-tools.snk
-    dotnet_native
-    dotnet/${DOTNET_PROJECT}/${DOTNET_PROJECT}.csproj
+    ${DOTNET_PATH}/${DOTNET_PROJECT}.csproj
   COMMAND ${DOTNET_EXECUTABLE} build -c Release /p:Platform=x64 ${DOTNET_PROJECT}/${DOTNET_PROJECT}.csproj
   COMMAND ${DOTNET_EXECUTABLE} pack -c Release ${DOTNET_PROJECT}/${DOTNET_PROJECT}.csproj
   BYPRODUCTS
@@ -213,14 +225,63 @@ add_custom_target(dotnet_package ALL
     dotnet/${DOTNET_PROJECT}/obj
     dotnet/packages
   WORKING_DIRECTORY dotnet
-  )
+)
+add_dependencies(dotnet_package dotnet_native_package)
 
+#################
+##  .Net Test  ##
+#################
+# add_dotnet_test()
+# CMake function to generate and build dotnet test.
+# Parameters:
+#  the dotnet filename
+# e.g.:
+# add_dotnet_test(FooTests.cs)
+function(add_dotnet_test FILE_NAME)
+  message(STATUS "Building ${FILE_NAME}: ...")
+  get_filename_component(TEST_NAME ${FILE_NAME} NAME_WE)
+  get_filename_component(COMPONENT_DIR ${FILE_NAME} DIRECTORY)
+  get_filename_component(COMPONENT_NAME ${COMPONENT_DIR} NAME)
+
+  set(TEST_PATH ${PROJECT_BINARY_DIR}/dotnet/${COMPONENT_NAME}/${TEST_NAME})
+  file(MAKE_DIRECTORY ${TEST_PATH})
+
+  file(COPY ${FILE_NAME} DESTINATION ${TEST_PATH})
+
+  set(DOTNET_PACKAGES_DIR "${PROJECT_BINARY_DIR}/dotnet/packages")
+  configure_file(
+    ${PROJECT_SOURCE_DIR}/ortools/dotnet/Test.csproj.in
+    ${TEST_PATH}/${TEST_NAME}.csproj
+    @ONLY)
+
+  add_custom_target(dotnet_test_${TEST_NAME} ALL
+    DEPENDS ${TEST_PATH}/${TEST_NAME}.csproj
+    COMMAND ${DOTNET_EXECUTABLE} build -c Release
+    BYPRODUCTS
+      ${TEST_PATH}/bin
+      ${TEST_PATH}/obj
+    WORKING_DIRECTORY ${TEST_PATH})
+  add_dependencies(dotnet_test_${TEST_NAME} dotnet_package)
+
+  if(BUILD_TESTING)
+    add_test(
+      NAME dotnet_${COMPONENT_NAME}_${TEST_NAME}
+      COMMAND ${DOTNET_EXECUTABLE} test --no-build -c Release
+      WORKING_DIRECTORY ${TEST_PATH})
+  endif()
+
+  message(STATUS "Building ${FILE_NAME}: ...DONE")
+endfunction()
+
+###################
+##  .Net Sample  ##
+###################
 # add_dotnet_sample()
 # CMake function to generate and build dotnet sample.
 # Parameters:
 #  the dotnet filename
 # e.g.:
-# add_dotnet_sample(Foo.cs)
+# add_dotnet_sample(FooApp.cs)
 function(add_dotnet_sample FILE_NAME)
   message(STATUS "Building ${FILE_NAME}: ...")
   get_filename_component(SAMPLE_NAME ${FILE_NAME} NAME_WE)
@@ -259,6 +320,9 @@ function(add_dotnet_sample FILE_NAME)
   message(STATUS "Building ${FILE_NAME}: ...DONE")
 endfunction()
 
+####################
+##  .Net Example  ##
+####################
 # add_dotnet_example()
 # CMake function to generate and build dotnet example.
 # Parameters:
@@ -303,44 +367,3 @@ function(add_dotnet_example FILE_NAME)
   message(STATUS "Building ${FILE_NAME}: ...DONE")
 endfunction()
 
-# add_dotnet_test()
-# CMake function to generate and build dotnet test.
-# Parameters:
-#  the dotnet filename
-# e.g.:
-# add_dotnet_test(Foo.cs)
-function(add_dotnet_test FILE_NAME)
-  message(STATUS "Building ${FILE_NAME}: ...")
-  get_filename_component(TEST_NAME ${FILE_NAME} NAME_WE)
-  get_filename_component(COMPONENT_DIR ${FILE_NAME} DIRECTORY)
-  get_filename_component(COMPONENT_NAME ${COMPONENT_DIR} NAME)
-
-  set(TEST_PATH ${PROJECT_BINARY_DIR}/dotnet/${COMPONENT_NAME}/${TEST_NAME})
-  file(MAKE_DIRECTORY ${TEST_PATH})
-
-  file(COPY ${FILE_NAME} DESTINATION ${TEST_PATH})
-
-  set(DOTNET_PACKAGES_DIR "${PROJECT_BINARY_DIR}/dotnet/packages")
-  configure_file(
-    ${PROJECT_SOURCE_DIR}/ortools/dotnet/Test.csproj.in
-    ${TEST_PATH}/${TEST_NAME}.csproj
-    @ONLY)
-
-  add_custom_target(dotnet_sample_${TEST_NAME} ALL
-    DEPENDS ${TEST_PATH}/${TEST_NAME}.csproj
-    COMMAND ${DOTNET_EXECUTABLE} build -c Release
-    BYPRODUCTS
-      ${TEST_PATH}/bin
-      ${TEST_PATH}/obj
-    WORKING_DIRECTORY ${TEST_PATH})
-  add_dependencies(dotnet_sample_${TEST_NAME} dotnet_package)
-
-  if(BUILD_TESTING)
-    add_test(
-      NAME dotnet_${COMPONENT_NAME}_${TEST_NAME}
-      COMMAND ${DOTNET_EXECUTABLE} test --no-build -c Release
-      WORKING_DIRECTORY ${TEST_PATH})
-  endif()
-
-  message(STATUS "Building ${FILE_NAME}: ...DONE")
-endfunction()
