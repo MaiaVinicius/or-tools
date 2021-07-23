@@ -15,7 +15,7 @@
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
 
     <!-- Signing -->
-    <AssemblyKeyFileAttribute>../../bin/or-tools.snk</AssemblyKeyFileAttribute>
+    <AssemblyKeyFileAttribute>../or-tools.snk</AssemblyKeyFileAttribute>
     <SignAssembly>true</SignAssembly>
     <PublicSign>false</PublicSign>
     <DelaySign>false</DelaySign>
