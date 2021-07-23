@@ -201,6 +201,8 @@ message(STATUS ".Net project: ${DOTNET_PROJECT}")
 set(DOTNET_PATH ${PROJECT_BINARY_DIR}/dotnet/${DOTNET_PROJECT})
 message(STATUS ".Net project build path: ${DOTNET_PATH}")
 
+set(PROJECT_DOTNET_DIR ${PROJECT_BINARY_DIR}/dotnet)
+
 configure_file(
   ${PROJECT_SOURCE_DIR}/ortools/dotnet/${DOTNET_PROJECT}.csproj.in
   ${DOTNET_PATH}/${DOTNET_PROJECT}.csproj.in
